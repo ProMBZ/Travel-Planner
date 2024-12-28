@@ -1,4 +1,5 @@
-SpeechRecognition==3.8.1
-pyttsx3==2.90
-pyaudio==0.2.11
 streamlit==1.0.0
+tavily==0.5.1
+langchain==0.11.0
+langgraph==0.1.0
+pandas==2.2.3
