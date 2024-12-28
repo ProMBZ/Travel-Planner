@@ -1,6 +1,4 @@
 import streamlit as st
-import speech_recognition as sr
-import pyttsx3
 from langchain_google_genai import ChatGoogleGenerativeAI
 from tavily import TavilyClient
 import json
@@ -27,9 +25,6 @@ tavily_client = TavilyClient(
 
 # Initialize LangGraph
 graph = Graph()
-
-# Initialize text-to-speech engine
-engine = pyttsx3.init()
 
 # Function to handle invalid input
 def handle_invalid_input():
@@ -71,7 +66,7 @@ def convert_currency(amount, currency):
     converted_amount = float(amount) * conversion_rates[currency.lower()]
     return converted_amount, None
 
-# Function to filter and format transportation options
+# Function to filter and format transportation options (ensuring 5 links)
 def filter_transportation_options(results):
     filtered_results = []
     for result in results:
@@ -112,66 +107,29 @@ def load_saved_travel_plans():
     except FileNotFoundError:
         return []
 
-# Function to allow the user to customize their budget allocation
-def customize_budget_allocation(total_budget):
-    st.write("\n🌟 Customize your Budget Allocation:")
-    
-    # Sliders to adjust percentage allocation
-    transportation_percentage = st.slider("Transportation Budget (%)", 0, 100, 40)
-    hotel_percentage = st.slider("Hotel Budget (%)", 0, 100, 40)
-    activities_percentage = st.slider("Activities Budget (%)", 0, 100, 20)
-    
-    # Check if the total percentage adds up to 100
-    if transportation_percentage + hotel_percentage + activities_percentage == 100:
-        # Calculate the actual amounts based on the user's input
-        transportation_budget = (transportation_percentage / 100) * total_budget
-        hotel_budget = (hotel_percentage / 100) * total_budget
-        activities_budget = (activities_percentage / 100) * total_budget
-    else:
-        st.error("❌ Total percentage must add up to 100%. Please try again.")
-        transportation_budget, hotel_budget, activities_budget = 0, 0, 0
-    
-    return transportation_budget, hotel_budget, activities_budget
+# Function to automatically allocate budget based on the trip type
+def allocate_budget(budget, trip_type):
+    # Basic logic for allocating budget based on luxury, middle, low
+    if trip_type == "Luxury":
+        return budget * 0.5, budget * 0.3, budget * 0.2  # High transportation budget
+    elif trip_type == "Middle":
+        return budget * 0.4, budget * 0.4, budget * 0.2  # Balanced budget
+    else:  # Low budget
+        return budget * 0.3, budget * 0.5, budget * 0.2  # Lower transportation budget, more for hotels
 
 # Function to infer transportation mode based on origin and destination
 def infer_transportation_mode(origin, destination, trip_type):
-    # Determine if the trip is a city-to-city or country-to-country
-    if origin.lower() == destination.lower():
-        return None  # Same city, no need for transportation options
-    elif trip_type == "One-Way":
-        return "flight"  # One-Way trip assumed as flight
-    elif trip_type == "Round Trip":
-        return "flight"  # Round trip, assume flight both ways
-    elif trip_type == "Multi-City":
-        return "flight"  # Multi-city, assume flights for simplicity
-
-# Function to use speech recognition to get voice input
-def listen_for_input():
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.write("🎤 Listening...")
-        audio = recognizer.listen(source)
-    try:
-        text = recognizer.recognize_google(audio)
-        st.write(f"You said: {text}")
-        return text
-    except sr.UnknownValueError:
-        st.error("Sorry, I could not understand the audio.")
-        return ""
-    except sr.RequestError:
-        st.error("Sorry, I'm having trouble with the speech recognition service.")
-        return ""
-
-# Function to speak the output
-def speak_output(output_text):
-    engine.say(output_text)
-    engine.runAndWait()
+    # If it's a city-to-city trip, ask the user for transportation mode
+    if origin.lower() != destination.lower():
+        return st.selectbox("What transportation mode do you prefer?", ["flight", "train", "bus"])
+    return None  # No transportation type needed for country-to-country trips
 
 # Define the travel planner workflow
-def travel_planner(origin, destination, budget, dates, transportation_type, currency, number_of_people):
-    st.write("🚍 Retrieving transportation options...")
+def travel_planner(origin, destination, budget, dates, transportation_type, currency, number_of_people, trip_type):
+    # Allocate budget based on trip type (luxury, middle, low)
+    transportation_budget, hotel_budget, activities_budget = allocate_budget(budget, trip_type)
 
-    # Determine if transportation is needed based on trip type
+    # Check if transportation type is needed
     if transportation_type:
         transport_query = (
             f"Find {transportation_type} ticket booking options from {origin} to {destination} "
@@ -199,19 +157,12 @@ def travel_planner(origin, destination, budget, dates, transportation_type, curr
 
     st.write("📋 Formatting the final travel plan...")
 
-    # Get customized budget allocation
-    transportation_budget, hotel_budget, activities_budget = customize_budget_allocation(budget)
+    formatted_plan = ""
 
-    formatted_plan = "\n🌟 Your Travel Plan:\n"
-    formatted_plan += f"👥 Number of Travelers: {number_of_people}\n"
-    formatted_plan += f"💰 Total Budget: {budget} {currency.upper()}\n"
-    formatted_plan += f"🚍 Transportation Budget: {transportation_budget} {currency.upper()}\n"
-    formatted_plan += f"🏨 Hotels Budget: {hotel_budget} {currency.upper()}\n"
-    formatted_plan += f"🎡 Activities Budget: {activities_budget} {currency.upper()}\n"
-
-    formatted_plan += "\n🚍 Transportation Options:\n"
-    total_transport_price = 0
-    if transport_options:
+    # Only show transportation details if relevant
+    if transportation_type:
+        formatted_plan += "\n🚍 Transportation Options:\n"
+        total_transport_price = 0
         for idx, option in enumerate(transport_options, start=1):
             if option['price'] != 'N/A' and option['price'] != "":
                 try:
@@ -221,7 +172,7 @@ def travel_planner(origin, destination, budget, dates, transportation_type, curr
             formatted_plan += f"{idx}. {option['title']}\n"
             formatted_plan += f"   Link: {option['url']}\n"
             formatted_plan += f"   Price: {option['price']}\n"
-    formatted_plan += f"🚍 Total Transportation Cost: {total_transport_price} {currency.upper()}\n"
+        formatted_plan += f"🚍 Total Transportation Cost: {total_transport_price} {currency.upper()}\n"
 
     formatted_plan += "\n🏨 Hotels:\n"
     total_hotel_price = 0
@@ -272,7 +223,7 @@ def main():
         destination = get_input("🌍 Where do you want to travel?")
 
         # Select the trip type
-        trip_type = st.selectbox("Choose your trip type", ["One-Way", "Round Trip", "Multi-City"])
+        trip_type = st.selectbox("Choose your trip type", ["Luxury", "Middle", "Low"])
 
         # Handle transportation mode depending on city-to-city or country-to-country
         transportation_type = infer_transportation_mode(origin, destination, trip_type)
@@ -298,11 +249,8 @@ def main():
         number_of_people = get_input("👥 How many people are traveling? (e.g., 1 for solo, 2 for pair): ")
 
         # Process travel query
-        result = travel_planner(origin, destination, converted_budget, str(dates), transportation_type, currency, number_of_people)
+        result = travel_planner(origin, destination, converted_budget, str(dates), transportation_type, currency, number_of_people, trip_type)
         st.write(result)
-
-        # Voice Output (read out the travel plan)
-        speak_output(result)
 
 if __name__ == "__main__":
     main()
